@@ -3,6 +3,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 
@@ -37,10 +38,52 @@ intents.message_content = True  # necesario para leer attachments/mensajes norma
 
 bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODULES_DIR = os.path.join(BASE_DIR, "modules")
+
+# módulos exactos que pol.py necesita — nombres EXACTOS, sensibles a mayúsculas
+REQUIRED_MODULE_FILES = [
+    "clean_gens.py",
+    "consts.py",
+    "debugging.py",
+    "reverse_pipes.py",
+    "tokenizers.py",
+    "vmify.py",
+    "__init__.py",
+]
+
 # URL que apunta directo a un archivo .lua (raw de github/pastebin/etc)
 LUA_URL_RE = re.compile(r"https?://\S+\.lua(?:\?\S*)?", re.IGNORECASE)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# bloque de código pegado en el mensaje, ej. ```lua ... ``` o con marcadores de Prometheus
+CODE_BLOCK_RE = re.compile(r"```(?:lua)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
+PROMETHEUS_HINTS = ("PHASE_BOUNDARY", "getfenv", "loadstring", "MoonSec", "Prometheus")
+
+
+def check_repo_health() -> str | None:
+    """
+    Revisa que pol.py y todos los módulos existan con el nombre exacto.
+    Devuelve None si todo está bien, o un mensaje de diagnóstico si falta algo.
+    """
+    problems = []
+
+    if not os.path.exists(os.path.join(BASE_DIR, "pol.py")):
+        problems.append("- Falta `pol.py` en la raíz del repo.")
+
+    if not os.path.isdir(MODULES_DIR):
+        problems.append("- No existe la carpeta `modules/` en la raíz del repo.")
+    else:
+        existing = set(os.listdir(MODULES_DIR))
+        for fname in REQUIRED_MODULE_FILES:
+            if fname == "__init__.py":
+                continue  # opcional, Python 3 no lo necesita
+            if fname not in existing:
+                problems.append(f"- Falta `modules/{fname}` (revisa mayúsculas/minúsculas exactas).")
+
+    if problems:
+        return "Problemas encontrados en el repo:\n" + "\n".join(problems)
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Stats en memoria (para el dashboard)
@@ -57,9 +100,10 @@ def bump(key: str):
     with STATS_LOCK:
         STATS[key] += 1
 
+
 # ---------------------------------------------------------------------------
 # Keep-alive web server (para que Render exponga un puerto HTTP y
-# UptimeRobot tenga algo que pinguear cada 5 min sin 404)
+# UptimeRobot tenga algo que pinguear sin 404)
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 
@@ -105,8 +149,13 @@ def keep_alive():
 # ---------------------------------------------------------------------------
 def run_deobfuscator(input_path: str, timeout: int = 120):
     """
-    Corre pol.py sobre input_path. Devuelve (output_path, stderr) o (None, stderr) si falla.
+    Corre pol.py sobre input_path. Devuelve (output_path, error_msg).
+    error_msg es None si todo salió bien.
     """
+    repo_problem = check_repo_health()
+    if repo_problem:
+        return None, repo_problem
+
     output_path = input_path.replace(".lua", "_deobf.lua")
     try:
         result = subprocess.run(
@@ -120,8 +169,14 @@ def run_deobfuscator(input_path: str, timeout: int = 120):
         return None, "El script tardó demasiado y se canceló."
 
     if not os.path.exists(output_path):
-        error_msg = result.stderr[-1500:] if result.stderr else "Error desconocido."
-        return None, error_msg
+        stderr = result.stderr or "Error desconocido."
+        if "ModuleNotFoundError" in stderr:
+            return None, (
+                "Falta un archivo en la carpeta `modules/` de tu repo de GitHub "
+                "(o el nombre no coincide exactamente, GitHub/Render es sensible a "
+                "mayúsculas y minúsculas).\n```\n" + stderr[-800:] + "\n```"
+            )
+        return None, stderr[-1500:]
 
     return output_path, None
 
@@ -143,12 +198,35 @@ async def download_to_temp(url: str, tmp_dir: str) -> str | None:
     return dest_path
 
 
+def save_text_to_temp(code: str, tmp_dir: str, filename: str = "pasted_script.lua") -> str:
+    dest_path = os.path.join(tmp_dir, filename)
+    with open(dest_path, "w", encoding="utf-8") as f:
+        f.write(code)
+    return dest_path
+
+
+def looks_like_obfuscated_lua(text: str) -> bool:
+    if not text:
+        return False
+    return any(hint.lower() in text.lower() for hint in PROMETHEUS_HINTS)
+
+
 # ---------------------------------------------------------------------------
 # Eventos
 # ---------------------------------------------------------------------------
 @bot.event
 async def on_ready():
     print(f"Conectado como {bot.user} (id: {bot.user.id})")
+
+    problem = check_repo_health()
+    if problem:
+        print("=" * 60)
+        print("ADVERTENCIA — el repo tiene archivos faltantes:")
+        print(problem)
+        print("=" * 60)
+    else:
+        print("Repo OK: pol.py y todos los módulos están presentes.")
+
     try:
         synced = await bot.tree.sync()
         print(f"Slash commands sincronizados: {len(synced)}")
@@ -158,38 +236,50 @@ async def on_ready():
 
 @bot.event
 async def on_message(message: discord.Message):
-    # no reaccionar a otros bots (evita loops)
     if message.author.bot:
         return
 
-    # sigue procesando comandos normales tipo !deobf
     await bot.process_commands(message)
 
     # --- auto-deob: archivo .lua adjunto ---
     for attachment in message.attachments:
         if attachment.filename.endswith(".lua"):
-            await auto_deobfuscate(message, attachment_url=attachment.url, filename=attachment.filename)
-            return  # solo procesa el primero para no saturar
+            await auto_deobfuscate(message, source="attachment", value=attachment.url, filename=attachment.filename)
+            return
+
+    content = message.content or ""
 
     # --- auto-deob: link a un .lua en el texto ---
-    match = LUA_URL_RE.search(message.content or "")
+    match = LUA_URL_RE.search(content)
     if match:
         url = match.group(0)
-        await auto_deobfuscate(message, attachment_url=url, filename=url.split("/")[-1].split("?")[0])
+        await auto_deobfuscate(message, source="url", value=url, filename=url.split("/")[-1].split("?")[0])
+        return
+
+    # --- auto-deob: código pegado en bloque ```lua ... ``` ---
+    code_match = CODE_BLOCK_RE.search(content)
+    if code_match:
+        code = code_match.group(1).strip()
+        is_lua_tagged = content.strip().lower().startswith("```lua")
+        if code and (is_lua_tagged or looks_like_obfuscated_lua(code)):
+            await auto_deobfuscate(message, source="text", value=code, filename="pasted_script.lua")
 
 
-async def auto_deobfuscate(message: discord.Message, attachment_url: str, filename: str):
+async def auto_deobfuscate(message: discord.Message, source: str, value: str, filename: str):
     bump("commands_run")
     async with message.channel.typing():
         with tempfile.TemporaryDirectory() as tmp_dir:
-            input_path = await download_to_temp(attachment_url, tmp_dir)
-            if input_path is None:
-                await message.reply("No pude descargar ese archivo/link.")
-                return
+            if source == "text":
+                input_path = save_text_to_temp(value, tmp_dir, filename)
+            else:
+                input_path = await download_to_temp(value, tmp_dir)
+                if input_path is None:
+                    await message.reply("No pude descargar ese archivo/link.")
+                    return
 
             output_path, error = run_deobfuscator(input_path)
             if output_path is None:
-                await message.reply(f"No se pudo deobfuscar.\n```\n{error}\n```")
+                await message.reply(f"No se pudo deobfuscar.\n{error}")
                 return
 
             await message.reply(
@@ -199,26 +289,35 @@ async def auto_deobfuscate(message: discord.Message, attachment_url: str, filena
 
 
 # ---------------------------------------------------------------------------
-# Comando con prefijo (!deobf) — se mantiene por compatibilidad
+# Comando con prefijo (!deobf) — con archivo o con texto pegado
 # ---------------------------------------------------------------------------
 @bot.command(name="deobf")
-async def deobf_prefix(ctx: commands.Context):
-    if not ctx.message.attachments:
-        await ctx.reply("Adjunta un archivo `.lua` junto con el comando `!deobf`.")
+async def deobf_prefix(ctx: commands.Context, *, codigo: str = None):
+    if ctx.message.attachments:
+        attachment = ctx.message.attachments[0]
+        if not attachment.filename.endswith(".lua"):
+            await ctx.reply("Solo acepto archivos `.lua`.")
+            return
+        await auto_deobfuscate(ctx.message, source="attachment", value=attachment.url, filename=attachment.filename)
         return
 
-    attachment = ctx.message.attachments[0]
-    if not attachment.filename.endswith(".lua"):
-        await ctx.reply("Solo acepto archivos `.lua`.")
-        return
+    if codigo:
+        code_match = CODE_BLOCK_RE.search(codigo)
+        code = code_match.group(1).strip() if code_match else codigo.strip()
+        if code:
+            await auto_deobfuscate(ctx.message, source="text", value=code, filename="pasted_script.lua")
+            return
 
-    await auto_deobfuscate(ctx.message, attachment_url=attachment.url, filename=attachment.filename)
+    await ctx.reply(
+        "Adjunta un archivo `.lua`, o pega el código así:\n"
+        "`!deobf` seguido de un bloque ```lua ... ```"
+    )
 
 
 # ---------------------------------------------------------------------------
-# Slash command (/deobf)
+# Slash commands
 # ---------------------------------------------------------------------------
-@bot.tree.command(name="deobf", description="Deobfusca un script .lua ofuscado con Prometheus")
+@bot.tree.command(name="deobf", description="Deobfusca un script .lua ofuscado con Prometheus (archivo)")
 @app_commands.describe(archivo="El archivo .lua que quieres deobfuscar")
 async def deobf_slash(interaction: discord.Interaction, archivo: discord.Attachment):
     if not archivo.filename.endswith(".lua"):
@@ -234,13 +333,76 @@ async def deobf_slash(interaction: discord.Interaction, archivo: discord.Attachm
 
         output_path, error = run_deobfuscator(input_path)
         if output_path is None:
-            await interaction.followup.send(f"No se pudo deobfuscar.\n```\n{error}\n```")
+            await interaction.followup.send(f"No se pudo deobfuscar.\n{error}")
             return
 
         await interaction.followup.send(
             SUCCESS_MESSAGE,
             file=discord.File(output_path),
         )
+
+
+@bot.tree.command(name="deobftext", description="Deobfusca código Lua pegado directamente como texto")
+@app_commands.describe(codigo="Pega aquí el script Lua ofuscado")
+async def deobftext_slash(interaction: discord.Interaction, codigo: str):
+    await interaction.response.defer(thinking=True)
+    bump("commands_run")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        code_match = CODE_BLOCK_RE.search(codigo)
+        code = code_match.group(1).strip() if code_match else codigo.strip()
+        input_path = save_text_to_temp(code, tmp_dir)
+
+        output_path, error = run_deobfuscator(input_path)
+        if output_path is None:
+            await interaction.followup.send(f"No se pudo deobfuscar.\n{error}")
+            return
+
+        await interaction.followup.send(
+            SUCCESS_MESSAGE,
+            file=discord.File(output_path),
+        )
+
+
+@bot.tree.command(name="stats", description="Muestra las estadísticas en vivo del bot")
+async def stats_slash(interaction: discord.Interaction):
+    with STATS_LOCK:
+        commands_run = STATS["commands_run"]
+        visits = STATS["visits"]
+        uptime_seconds = int(time.time() - STATS["start_time"])
+    guild_count = len(bot.guilds)
+
+    h, rem = divmod(uptime_seconds, 3600)
+    m, s = divmod(rem, 60)
+
+    embed = discord.Embed(title="👑 King Deobfuscator — Stats", color=discord.Color.purple())
+    embed.add_field(name="Uptime", value=f"{h}h {m}m {s}s", inline=True)
+    embed.add_field(name="Servidores", value=str(guild_count), inline=True)
+    embed.add_field(name="Deobfuscaciones", value=str(commands_run), inline=True)
+    embed.add_field(name="Visitas web", value=str(visits), inline=True)
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="ping", description="Revisa la latencia del bot")
+async def ping_slash(interaction: discord.Interaction):
+    await interaction.response.send_message(f"🏓 Pong! {round(bot.latency * 1000)}ms")
+
+
+@bot.tree.command(name="help", description="Muestra cómo usar King Deobfuscator")
+async def help_slash(interaction: discord.Interaction):
+    text = textwrap.dedent(f"""
+        **King Deobfuscator — Comandos**
+
+        `/deobf archivo:` — sube un archivo `.lua` y lo deobfusca.
+        `/deobftext codigo:` — pega el script Lua directo como texto.
+        `!deobf` — igual que `/deobf`, adjuntando el archivo al mensaje o pegando ```lua ... ``` después del comando.
+        **Auto-deob** — manda un `.lua`, un link a un `.lua`, o pega un bloque ```lua ... ``` en cualquier canal y lo detecto solo.
+        `/stats` — estadísticas en vivo del bot.
+        `/ping` — latencia del bot.
+
+        By King Deobfuscator — {DISCORD_INVITE}
+    """).strip()
+    await interaction.response.send_message(text)
 
 
 if __name__ == "__main__":
