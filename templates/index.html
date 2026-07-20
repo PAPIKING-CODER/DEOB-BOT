@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>King Deobfuscator — Live Dashboard</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(circle at 50% 0%, #1a0b2e 0%, #05010a 60%);
+    color: #e6e6ff;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 16px;
+  }
+  h1 {
+    font-size: 2rem;
+    letter-spacing: 2px;
+    margin-bottom: 4px;
+    background: linear-gradient(90deg, #b967ff, #22d3ee);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-align: center;
+  }
+  .subtitle {
+    color: #9d8cff;
+    margin-bottom: 32px;
+    font-size: 0.95rem;
+    text-align: center;
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(34, 211, 238, 0.08);
+    border: 1px solid rgba(34, 211, 238, 0.35);
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    margin-bottom: 32px;
+  }
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #22d3ee;
+    box-shadow: 0 0 8px #22d3ee;
+    animation: pulse 1.4s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 18px;
+    width: 100%;
+    max-width: 900px;
+  }
+  .card {
+    background: linear-gradient(160deg, rgba(185,103,255,0.08), rgba(34,211,238,0.04));
+    border: 1px solid rgba(185, 103, 255, 0.25);
+    border-radius: 14px;
+    padding: 22px 18px;
+    text-align: center;
+    backdrop-filter: blur(6px);
+  }
+  .card .label {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #b39ddb;
+    margin-bottom: 10px;
+  }
+  .card .value {
+    font-size: 1.9rem;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 0 12px rgba(185,103,255,0.5);
+  }
+  footer {
+    margin-top: 48px;
+    color: #6b6b8f;
+    font-size: 0.8rem;
+    text-align: center;
+    line-height: 1.6;
+  }
+  footer a {
+    color: #22d3ee;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+
+  <h1>👑 KING DEOBFUSCATOR</h1>
+  <div class="subtitle">Prometheus / MoonsecV2 / MoonsecV3 Lua Deobfuscator Bot</div>
+
+  <div class="status-pill"><span class="dot"></span> BOT ONLINE</div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">Uptime</div>
+      <div class="value" id="uptime">--:--:--</div>
+    </div>
+    <div class="card">
+      <div class="label">Servidores</div>
+      <div class="value" id="guilds">0</div>
+    </div>
+    <div class="card">
+      <div class="label">Deobfuscaciones</div>
+      <div class="value" id="commands">0</div>
+    </div>
+    <div class="card">
+      <div class="label">Visitas web</div>
+      <div class="value" id="visits">0</div>
+    </div>
+  </div>
+
+  <footer>
+    By King Deobfuscator — <a href="https://discord.gg/85aX5f5WHz" target="_blank">discord.gg/85aX5f5WHz</a><br>
+    Basado en Prometheus-Deobfuscator (MIT)
+  </footer>
+
+  <!-- Elfsight Background Music | Untitled Background Music -->
+  <script src="https://elfsightcdn.com/platform.js" async></script>
+  <div class="elfsight-app-f9d02f8b-2aa3-4cd5-a29f-ce9ebb0463c9" data-elfsight-app-lazy></div>
+
+  <script>
+    let uptimeSeconds = 0;
+
+    function formatUptime(totalSeconds) {
+      const d = Math.floor(totalSeconds / 86400);
+      const h = Math.floor((totalSeconds % 86400) / 3600);
+      const m = Math.floor((totalSeconds % 3600) / 60);
+      const s = Math.floor(totalSeconds % 60);
+      const pad = (n) => String(n).padStart(2, '0');
+      return d > 0
+        ? `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`
+        : `${pad(h)}:${pad(m)}:${pad(s)}`;
+    }
+
+    async function fetchStats() {
+      try {
+        const res = await fetch('/api/stats');
+        const data = await res.json();
+        uptimeSeconds = data.uptime_seconds;
+        document.getElementById('guilds').textContent = data.guild_count;
+        document.getElementById('commands').textContent = data.commands_run;
+        document.getElementById('visits').textContent = data.visits;
+      } catch (e) {
+        console.error('No se pudo leer /api/stats', e);
+      }
+    }
+
+    // tick local cada segundo para que el uptime se vea fluido
+    setInterval(() => {
+      uptimeSeconds += 1;
+      document.getElementById('uptime').textContent = formatUptime(uptimeSeconds);
+    }, 1000);
+
+    // resincroniza con el servidor cada 10s
+    fetchStats();
+    setInterval(fetchStats, 10000);
+  </script>
+
+</body>
+</html>
