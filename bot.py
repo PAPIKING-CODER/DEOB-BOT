@@ -4,12 +4,19 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
-from flask import Flask
+from flask import Flask, render_template, jsonify
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # no hace nada si no existe .env (ej. en Render)
+except ImportError:
+    pass
 
 # ---------------------------------------------------------------------------
 # Config
@@ -36,6 +43,21 @@ LUA_URL_RE = re.compile(r"https?://\S+\.lua(?:\?\S*)?", re.IGNORECASE)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ---------------------------------------------------------------------------
+# Stats en memoria (para el dashboard)
+# ---------------------------------------------------------------------------
+STATS_LOCK = threading.Lock()
+STATS = {
+    "start_time": time.time(),
+    "commands_run": 0,
+    "visits": 0,
+}
+
+
+def bump(key: str):
+    with STATS_LOCK:
+        STATS[key] += 1
+
+# ---------------------------------------------------------------------------
 # Keep-alive web server (para que Render exponga un puerto HTTP y
 # UptimeRobot tenga algo que pinguear cada 5 min sin 404)
 # ---------------------------------------------------------------------------
@@ -44,7 +66,23 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot online.", 200
+    bump("visits")
+    return render_template("index.html")
+
+
+@app.route("/api/stats")
+def api_stats():
+    with STATS_LOCK:
+        commands_run = STATS["commands_run"]
+        visits = STATS["visits"]
+        uptime_seconds = int(time.time() - STATS["start_time"])
+    guild_count = len(bot.guilds) if bot.is_ready() else 0
+    return jsonify({
+        "uptime_seconds": uptime_seconds,
+        "guild_count": guild_count,
+        "commands_run": commands_run,
+        "visits": visits,
+    })
 
 
 @app.route("/health")
@@ -141,6 +179,7 @@ async def on_message(message: discord.Message):
 
 
 async def auto_deobfuscate(message: discord.Message, attachment_url: str, filename: str):
+    bump("commands_run")
     async with message.channel.typing():
         with tempfile.TemporaryDirectory() as tmp_dir:
             input_path = await download_to_temp(attachment_url, tmp_dir)
@@ -187,6 +226,7 @@ async def deobf_slash(interaction: discord.Interaction, archivo: discord.Attachm
         return
 
     await interaction.response.defer(thinking=True)
+    bump("commands_run")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         input_path = os.path.join(tmp_dir, archivo.filename)
