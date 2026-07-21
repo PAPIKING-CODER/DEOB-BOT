@@ -6,30 +6,55 @@
 <title>King Deobfuscator — Live Dashboard</title>
 <style>
   * { box-sizing: border-box; }
-  body {
+  html, body {
     margin: 0;
+    height: 100%;
+    background: #0a0000;
+    overflow-x: hidden;
+  }
+  body {
     min-height: 100vh;
-    background: radial-gradient(circle at 50% 0%, #1a0b2e 0%, #05010a 60%);
-    color: #e6e6ff;
+    background: radial-gradient(circle at 50% -10%, #2a0505 0%, #0a0000 55%, #000000 100%);
+    color: #ffe0e0;
     font-family: 'Segoe UI', system-ui, sans-serif;
     display: flex;
     flex-direction: column;
     align-items: center;
     padding: 40px 16px;
+    position: relative;
   }
+
+  canvas#fx-particles, canvas#fx-trail {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .content {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+  }
+
   h1 {
     font-size: 2rem;
-    letter-spacing: 2px;
+    letter-spacing: 3px;
     margin-bottom: 4px;
-    background: linear-gradient(90deg, #b967ff, #22d3ee);
+    background: linear-gradient(90deg, #ff1f3d, #ff6a00);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
     text-align: center;
+    text-shadow: 0 0 40px rgba(255,31,61,0.3);
   }
   .subtitle {
-    color: #9d8cff;
-    margin-bottom: 32px;
+    color: #d17a7a;
+    margin-bottom: 24px;
     font-size: 0.95rem;
     text-align: center;
   }
@@ -37,103 +62,263 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    background: rgba(34, 211, 238, 0.08);
-    border: 1px solid rgba(34, 211, 238, 0.35);
+    background: rgba(255, 31, 61, 0.08);
+    border: 1px solid rgba(255, 31, 61, 0.4);
     padding: 6px 14px;
     border-radius: 999px;
     font-size: 0.85rem;
-    margin-bottom: 32px;
+    margin-bottom: 28px;
   }
   .dot {
     width: 9px;
     height: 9px;
     border-radius: 50%;
-    background: #22d3ee;
-    box-shadow: 0 0 8px #22d3ee;
+    background: #ff1f3d;
+    box-shadow: 0 0 10px #ff1f3d;
     animation: pulse 1.4s infinite;
   }
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.35; }
   }
+
+  .cta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    justify-content: center;
+    margin-bottom: 40px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 22px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 0.95rem;
+    text-decoration: none;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    border: 1px solid transparent;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+  }
+  .btn:active { transform: scale(0.96); }
+  .btn:hover { transform: translateY(-2px); }
+  .btn-primary {
+    background: linear-gradient(90deg, #ff1f3d, #ff6a00);
+    color: #0a0000;
+    box-shadow: 0 4px 24px rgba(255, 31, 61, 0.45);
+  }
+  .btn-primary:hover { box-shadow: 0 6px 30px rgba(255, 106, 0, 0.55); }
+  .btn-secondary {
+    background: rgba(255,255,255,0.03);
+    color: #ffe0e0;
+    border-color: rgba(255, 31, 61, 0.35);
+  }
+  .btn-secondary:hover { border-color: #ff6a00; }
+  .btn[disabled] {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 18px;
     width: 100%;
     max-width: 900px;
+    margin-bottom: 48px;
   }
   .card {
-    background: linear-gradient(160deg, rgba(185,103,255,0.08), rgba(34,211,238,0.04));
-    border: 1px solid rgba(185, 103, 255, 0.25);
+    background: linear-gradient(160deg, rgba(255,31,61,0.10), rgba(0,0,0,0.3));
+    border: 1px solid rgba(255, 31, 61, 0.25);
     border-radius: 14px;
     padding: 22px 18px;
     text-align: center;
     backdrop-filter: blur(6px);
+    transition: border-color 0.2s ease, transform 0.2s ease;
+  }
+  .card:hover {
+    border-color: rgba(255, 106, 0, 0.6);
+    transform: translateY(-3px);
   }
   .card .label {
     font-size: 0.78rem;
     text-transform: uppercase;
     letter-spacing: 1.5px;
-    color: #b39ddb;
+    color: #d17a7a;
     margin-bottom: 10px;
   }
   .card .value {
     font-size: 1.9rem;
     font-weight: 700;
     color: #fff;
-    text-shadow: 0 0 12px rgba(185,103,255,0.5);
+    text-shadow: 0 0 14px rgba(255,31,61,0.6);
   }
+
+  .commands-section {
+    width: 100%;
+    max-width: 900px;
+    margin-bottom: 40px;
+  }
+  .section-title {
+    font-size: 1.1rem;
+    color: #ff6a00;
+    letter-spacing: 1px;
+    margin-bottom: 16px;
+    text-align: center;
+    text-transform: uppercase;
+  }
+  .commands-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  .cmd-row {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,31,61,0.15);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 0.85rem;
+    transition: border-color 0.2s ease;
+  }
+  .cmd-row:hover { border-color: rgba(255,106,0,0.5); }
+  .cmd-row code {
+    color: #ff6a00;
+    font-weight: 700;
+  }
+  .cmd-row span {
+    color: #b58888;
+    display: block;
+    margin-top: 4px;
+  }
+
+  /* ---- Ticker de actividad ---- */
+  .ticker-wrap {
+    width: 100%;
+    max-width: 900px;
+    border: 1px solid rgba(255,31,61,0.25);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.02);
+    overflow: hidden;
+    margin-bottom: 40px;
+    padding: 10px 0;
+  }
+  .ticker {
+    display: flex;
+    white-space: nowrap;
+    animation: scroll-left 18s linear infinite;
+  }
+  .ticker span {
+    padding: 0 32px;
+    font-size: 0.82rem;
+    color: #ff8c8c;
+  }
+  @keyframes scroll-left {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+
   footer {
-    margin-top: 48px;
-    color: #6b6b8f;
+    position: relative;
+    z-index: 2;
+    margin-top: 8px;
+    color: #7a5555;
     font-size: 0.8rem;
     text-align: center;
-    line-height: 1.6;
+    line-height: 1.8;
   }
   footer a {
-    color: #22d3ee;
+    color: #ff6a00;
     text-decoration: none;
   }
+  footer a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
 
-  <h1>👑 KING DEOBFUSCATOR</h1>
-  <div class="subtitle">Prometheus / MoonsecV2 / MoonsecV3 Lua Deobfuscator Bot</div>
+  <canvas id="fx-particles"></canvas>
+  <canvas id="fx-trail"></canvas>
 
-  <div class="status-pill"><span class="dot"></span> BOT ONLINE</div>
+  <div class="content">
+    <h1>👑 KING DEOBFUSCATOR</h1>
+    <div class="subtitle">Prometheus / MoonsecV2 / MoonsecV3 Lua Deobfuscator Bot</div>
 
-  <div class="grid">
-    <div class="card">
-      <div class="label">Uptime</div>
-      <div class="value" id="uptime">--:--:--</div>
+    <div class="status-pill"><span class="dot"></span> BOT ONLINE</div>
+
+    <div class="cta-row">
+      <a id="invite-btn" class="btn btn-primary" href="#" target="_blank" disabled>
+        ➕ Invitar al bot
+      </a>
+      <a class="btn btn-secondary" href="https://discord.gg/85aX5f5WHz" target="_blank">
+        💬 Server de soporte
+      </a>
     </div>
-    <div class="card">
-      <div class="label">Servidores</div>
-      <div class="value" id="guilds">0</div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="label">Uptime</div>
+        <div class="value" id="uptime">--:--:--</div>
+      </div>
+      <div class="card">
+        <div class="label">Servidores</div>
+        <div class="value" id="guilds">0</div>
+      </div>
+      <div class="card">
+        <div class="label">Deobfuscaciones</div>
+        <div class="value" id="commands">0</div>
+      </div>
+      <div class="card">
+        <div class="label">Visitas web</div>
+        <div class="value" id="visits">0</div>
+      </div>
     </div>
-    <div class="card">
-      <div class="label">Deobfuscaciones</div>
-      <div class="value" id="commands">0</div>
+
+    <div class="commands-section">
+      <div class="section-title">Comandos</div>
+      <div class="commands-list">
+        <div class="cmd-row"><code>/deobf</code><span>Sube un archivo .lua y lo deobfusca</span></div>
+        <div class="cmd-row"><code>/deobftext</code><span>Pega el script Lua directo como texto</span></div>
+        <div class="cmd-row"><code>!deobf</code><span>Igual que /deobf, con prefijo</span></div>
+        <div class="cmd-row"><code>Auto-deob</code><span>Manda un .lua, link, o bloque ```lua``` y lo detecta solo</span></div>
+        <div class="cmd-row"><code>/stats</code><span>Estadísticas en vivo del bot</span></div>
+        <div class="cmd-row"><code>/ping</code><span>Latencia del bot</span></div>
+        <div class="cmd-row"><code>/help</code><span>Lista completa de comandos</span></div>
+        <div class="cmd-row"><code>/setupdeob</code><span>[Owner] Canal fijo de auto-deob</span></div>
+      </div>
     </div>
-    <div class="card">
-      <div class="label">Visitas web</div>
-      <div class="value" id="visits">0</div>
+
+    <div class="ticker-wrap">
+      <div class="ticker" id="ticker">
+        <span>⚡ VM devirtualization engine online</span>
+        <span>👑 King Deobfuscator</span>
+        <span>🔓 Prometheus / MoonSec V2 / V3 support</span>
+        <span>💀 Reverse engineering, automated</span>
+        <span>⚡ VM devirtualization engine online</span>
+        <span>👑 King Deobfuscator</span>
+        <span>🔓 Prometheus / MoonSec V2 / V3 support</span>
+        <span>💀 Reverse engineering, automated</span>
+      </div>
     </div>
+
+    <footer>
+      By King Deobfuscator — <a href="https://discord.gg/85aX5f5WHz" target="_blank">discord.gg/85aX5f5WHz</a><br>
+      Basado en Prometheus-Deobfuscator (MIT)
+    </footer>
   </div>
-
-  <footer>
-    By King Deobfuscator — <a href="https://discord.gg/85aX5f5WHz" target="_blank">discord.gg/85aX5f5WHz</a><br>
-    Basado en Prometheus-Deobfuscator (MIT)
-  </footer>
 
   <!-- Elfsight Background Music | Untitled Background Music -->
   <script src="https://elfsightcdn.com/platform.js" async></script>
   <div class="elfsight-app-f9d02f8b-2aa3-4cd5-a29f-ce9ebb0463c9" data-elfsight-app-lazy></div>
 
   <script>
+    /* =========================================================
+       STATS (uptime, servers, commands, visits, invite link)
+       ========================================================= */
     let uptimeSeconds = 0;
+    let inviteSet = false;
 
     function formatUptime(totalSeconds) {
       const d = Math.floor(totalSeconds / 86400);
@@ -154,20 +339,140 @@
         document.getElementById('guilds').textContent = data.guild_count;
         document.getElementById('commands').textContent = data.commands_run;
         document.getElementById('visits').textContent = data.visits;
+
+        if (!inviteSet && data.invite_url) {
+          const btn = document.getElementById('invite-btn');
+          btn.href = data.invite_url;
+          btn.removeAttribute('disabled');
+          inviteSet = true;
+        }
       } catch (e) {
         console.error('No se pudo leer /api/stats', e);
       }
     }
 
-    // tick local cada segundo para que el uptime se vea fluido
     setInterval(() => {
       uptimeSeconds += 1;
       document.getElementById('uptime').textContent = formatUptime(uptimeSeconds);
     }, 1000);
 
-    // resincroniza con el servidor cada 10s
     fetchStats();
     setInterval(fetchStats, 10000);
+
+    /* =========================================================
+       PARTÍCULAS DE FONDO (canvas, rojo/negro, flotando)
+       ========================================================= */
+    const pCanvas = document.getElementById('fx-particles');
+    const pCtx = pCanvas.getContext('2d');
+    let particles = [];
+
+    function resizeCanvases() {
+      [pCanvas, document.getElementById('fx-trail')].forEach(c => {
+        c.width = window.innerWidth;
+        c.height = window.innerHeight;
+      });
+    }
+    resizeCanvases();
+    window.addEventListener('resize', resizeCanvases);
+
+    function makeParticle() {
+      return {
+        x: Math.random() * pCanvas.width,
+        y: Math.random() * pCanvas.height,
+        r: Math.random() * 1.8 + 0.6,
+        vx: (Math.random() - 0.5) * 0.25,
+        vy: (Math.random() - 0.5) * 0.25,
+        alpha: Math.random() * 0.5 + 0.15,
+        hue: Math.random() > 0.5 ? '255,31,61' : '255,106,0',
+      };
+    }
+
+    const PARTICLE_COUNT = Math.min(90, Math.floor((window.innerWidth * window.innerHeight) / 14000));
+    for (let i = 0; i < PARTICLE_COUNT; i++) particles.push(makeParticle());
+
+    function drawParticles() {
+      pCtx.clearRect(0, 0, pCanvas.width, pCanvas.height);
+      for (const p of particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.x < 0) p.x = pCanvas.width;
+        if (p.x > pCanvas.width) p.x = 0;
+        if (p.y < 0) p.y = pCanvas.height;
+        if (p.y > pCanvas.height) p.y = 0;
+
+        pCtx.beginPath();
+        pCtx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        pCtx.fillStyle = `rgba(${p.hue}, ${p.alpha})`;
+        pCtx.fill();
+      }
+      requestAnimationFrame(drawParticles);
+    }
+    drawParticles();
+
+    /* =========================================================
+       EFECTO DE CLICK (ondas rojas al hacer click/tap)
+       ========================================================= */
+    const tCanvas = document.getElementById('fx-trail');
+    const tCtx = tCanvas.getContext('2d');
+    let ripples = [];
+    let trailPoints = [];
+
+    function spawnRipple(x, y) {
+      ripples.push({ x, y, r: 0, alpha: 0.7 });
+    }
+
+    function handleClick(e) {
+      const x = e.touches ? e.touches[0].clientX : e.clientX;
+      const y = e.touches ? e.touches[0].clientY : e.clientY;
+      spawnRipple(x, y);
+    }
+    window.addEventListener('click', handleClick);
+    window.addEventListener('touchstart', handleClick, { passive: true });
+
+    /* =========================================================
+       EFECTO DE DESLIZAR (rastro de dedo/mouse)
+       ========================================================= */
+    function addTrailPoint(x, y) {
+      trailPoints.push({ x, y, alpha: 0.5, r: Math.random() * 2 + 1.5 });
+      if (trailPoints.length > 60) trailPoints.shift();
+    }
+
+    window.addEventListener('mousemove', (e) => addTrailPoint(e.clientX, e.clientY));
+    window.addEventListener('touchmove', (e) => {
+      for (const t of e.touches) addTrailPoint(t.clientX, t.clientY);
+    }, { passive: true });
+
+    function drawTrailAndRipples() {
+      tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
+
+      // rastro al deslizar
+      for (let i = trailPoints.length - 1; i >= 0; i--) {
+        const pt = trailPoints[i];
+        tCtx.beginPath();
+        tCtx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2);
+        tCtx.fillStyle = `rgba(255, 40, 60, ${pt.alpha})`;
+        tCtx.fill();
+        pt.alpha -= 0.015;
+        pt.r *= 0.98;
+        if (pt.alpha <= 0) trailPoints.splice(i, 1);
+      }
+
+      // ondas de click
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        const r = ripples[i];
+        tCtx.beginPath();
+        tCtx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+        tCtx.strokeStyle = `rgba(255, 106, 0, ${r.alpha})`;
+        tCtx.lineWidth = 2;
+        tCtx.stroke();
+        r.r += 3.2;
+        r.alpha -= 0.018;
+        if (r.alpha <= 0) ripples.splice(i, 1);
+      }
+
+      requestAnimationFrame(drawTrailAndRipples);
+    }
+    drawTrailAndRipples();
   </script>
 
 </body>
