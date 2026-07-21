@@ -1,12 +1,13 @@
 services:
   - type: web
-    name: prometheus-deobf-bot
-    env: python
+    name: king-deobfuscator
+    env: docker
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: DISCORD_TOKEN
         sync: false
-      - key: PYTHON_VERSION
-        value: 3.12.0
+      - key: OWNER_ID
+        sync: false
+      - key: COMMAND_PREFIX
+        value: "!"
