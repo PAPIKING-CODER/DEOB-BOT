@@ -45,6 +45,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODULES_DIR = os.path.join(BASE_DIR, "modules")
 DATA_PATH = os.path.join(BASE_DIR, "bot_data.json")
 
+# --- Motor V1 (pol.py, Python) ---
 REQUIRED_MODULE_FILES = [
     "clean_gens.py",
     "consts.py",
@@ -53,6 +54,10 @@ REQUIRED_MODULE_FILES = [
     "tokenizers.py",
     "vmify.py",
 ]
+
+# --- Motor V2 (Prometheus-DeobfuscatorV2, Lua) — se clona en el Dockerfile ---
+V2_CLI_PATH = os.path.join(BASE_DIR, "deobv2", "src", "deob", "cli.lua")
+LUA_BIN = os.environ.get("LUA_BIN", "lua5.1")
 
 LUA_URL_RE = re.compile(r"https?://\S+\.lua(?:\?\S*)?", re.IGNORECASE)
 CODE_BLOCK_RE = re.compile(r"```(?:lua)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
@@ -198,7 +203,34 @@ def keep_alive():
 # ---------------------------------------------------------------------------
 # Deobfuscador
 # ---------------------------------------------------------------------------
-def run_deobfuscator(input_path: str, timeout: int = 120):
+def run_deobfuscator_v2(input_path: str, timeout: int = 120):
+    """Corre el motor V2 (Lua). Devuelve (output_path, error_msg)."""
+    if not os.path.exists(V2_CLI_PATH):
+        return None, "V2 no está instalado en este contenedor (falta deobv2/, revisa el Dockerfile)."
+
+    output_path = input_path.replace(".lua", "_deobf_v2.lua")
+    try:
+        result = subprocess.run(
+            [LUA_BIN, V2_CLI_PATH, input_path, "--trace", "calls", "--out", output_path],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=BASE_DIR,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "V2 tardó demasiado y se canceló."
+    except FileNotFoundError:
+        return None, f"No se encontró el intérprete de Lua ({LUA_BIN}) en el contenedor."
+
+    if not os.path.exists(output_path):
+        stderr = result.stderr or result.stdout or "V2 no generó salida."
+        return None, stderr[-1500:]
+
+    return output_path, None
+
+
+def run_deobfuscator_v1(input_path: str, timeout: int = 120):
+    """Corre el motor V1 (pol.py, Python) — fallback si V2 falla."""
     repo_problem = check_repo_health()
     if repo_problem:
         return None, repo_problem
@@ -213,7 +245,7 @@ def run_deobfuscator(input_path: str, timeout: int = 120):
             cwd=BASE_DIR,
         )
     except subprocess.TimeoutExpired:
-        return None, "El script tardó demasiado y se canceló."
+        return None, "V1 tardó demasiado y se canceló."
 
     if not os.path.exists(output_path):
         stderr = result.stderr or "Error desconocido."
@@ -225,6 +257,26 @@ def run_deobfuscator(input_path: str, timeout: int = 120):
         return None, stderr[-1500:]
 
     return output_path, None
+
+
+def run_deobfuscator(input_path: str, timeout: int = 120):
+    """
+    Intenta primero el motor V2 (mejor calidad, devirtualización real).
+    Si falla, cae automáticamente al motor V1 (pol.py).
+    Devuelve (output_path, error_msg, engine_used).
+    """
+    output_v2, err_v2 = run_deobfuscator_v2(input_path, timeout=timeout)
+    if output_v2:
+        return output_v2, None, "V2"
+
+    output_v1, err_v1 = run_deobfuscator_v1(input_path, timeout=timeout)
+    if output_v1:
+        return output_v1, None, "V1 (fallback)"
+
+    combined_error = (
+        f"**Motor V2 falló:**\n{err_v2}\n\n**Motor V1 (fallback) también falló:**\n{err_v1}"
+    )
+    return None, combined_error, None
 
 
 async def download_to_temp(url: str, tmp_dir: str) -> str | None:
@@ -343,13 +395,13 @@ async def auto_deobfuscate(message: discord.Message, source: str, value: str, fi
                     await message.reply(f"{emoji('failed')} No pude descargar ese archivo/link.")
                     return
 
-            output_path, error = run_deobfuscator(input_path)
+            output_path, error, engine = run_deobfuscator(input_path)
             if output_path is None:
                 await message.reply(f"{emoji('failed')} No se pudo deobfuscar.\n{error}")
                 return
 
             await message.reply(
-                f"{emoji('success')} {SUCCESS_MESSAGE}",
+                f"{emoji('success')} {SUCCESS_MESSAGE}\n-# engine: {engine}",
                 file=discord.File(output_path),
             )
 
@@ -403,11 +455,11 @@ async def deobf_slash(interaction: discord.Interaction, archivo: discord.Attachm
     with tempfile.TemporaryDirectory() as tmp_dir:
         input_path = os.path.join(tmp_dir, archivo.filename)
         await archivo.save(input_path)
-        output_path, error = run_deobfuscator(input_path)
+        output_path, error, engine = run_deobfuscator(input_path)
         if output_path is None:
             await interaction.followup.send(f"{emoji('failed')} No se pudo deobfuscar.\n{error}")
             return
-        await interaction.followup.send(f"{emoji('success')} {SUCCESS_MESSAGE}", file=discord.File(output_path))
+        await interaction.followup.send(f"{emoji('success')} {SUCCESS_MESSAGE}\n-# engine: {engine}", file=discord.File(output_path))
 
 
 @bot.tree.command(name="deobftext", description="Deobfusca código Lua pegado directamente como texto")
@@ -424,11 +476,11 @@ async def deobftext_slash(interaction: discord.Interaction, codigo: str):
         code_match = CODE_BLOCK_RE.search(codigo)
         code = code_match.group(1).strip() if code_match else codigo.strip()
         input_path = save_text_to_temp(code, tmp_dir)
-        output_path, error = run_deobfuscator(input_path)
+        output_path, error, engine = run_deobfuscator(input_path)
         if output_path is None:
             await interaction.followup.send(f"{emoji('failed')} No se pudo deobfuscar.\n{error}")
             return
-        await interaction.followup.send(f"{emoji('success')} {SUCCESS_MESSAGE}", file=discord.File(output_path))
+        await interaction.followup.send(f"{emoji('success')} {SUCCESS_MESSAGE}\n-# engine: {engine}", file=discord.File(output_path))
 
 
 @bot.tree.command(name="stats", description="Muestra las estadísticas en vivo del bot")
